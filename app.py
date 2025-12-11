@@ -1,10 +1,69 @@
 import streamlit as st
 from PIL import Image
+import os
+
+# PDF生成用ライブラリ
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib import colors
+import requests
 
 # ---------------------------------------------------------
-# 1. データベース（テキストに基づく12色の定義）
+# 0. 設定とデザイン (CSS)
 # ---------------------------------------------------------
-# 引用元: テキスト P.71~82, P.120-121
+st.set_page_config(
+    page_title="QTV 声解析・診断システム",
+    page_icon="🎤",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# カスタムCSS（アカデミー風デザイン）
+st.markdown("""
+    <style>
+    /* 全体の背景とフォント */
+    .stApp {
+        background-color: #f0f2f6;
+    }
+    /* ヘッダーのスタイル */
+    .main-header {
+        background-color: #0E1117;
+        color: #C9A063; /* ゴールド */
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    h1 {
+        color: #1E3A8A; /* ネイビーブルー */
+        font-family: 'Helvetica', sans-serif;
+    }
+    h2, h3 {
+        color: #1E3A8A;
+    }
+    /* 診断結果のボックス */
+    .result-box {
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    /* ボタンのスタイル */
+    .stButton>button {
+        background-color: #1E3A8A;
+        color: white;
+        border-radius: 5px;
+        width: 100%;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 1. データベース
+# ---------------------------------------------------------
 COLOR_DB = {
     "Red": {
         "name": "レッド (R)",
@@ -91,118 +150,215 @@ COLOR_DB = {
         "prescription": "募金、ボランティア、感謝を伝える"
     }
 }
-
-# 選択肢用のリスト
 COLOR_OPTIONS = list(COLOR_DB.keys())
 
 # ---------------------------------------------------------
-# 2. アプリ画面構成
+# 2. PDF生成機能
 # ---------------------------------------------------------
-st.title("🎤 QTV 声解析・診断アプリ")
-st.caption("グラフの画像を読み込み、その結果を選択して診断します。")
+@st.cache_resource
+def setup_font():
+    # 日本語フォント(IPAexGothic)をダウンロードして設定
+    font_path = "IPAexGothic.ttf"
+    if not os.path.exists(font_path):
+        url = "https://moji.or.jp/wp-content/ipafont/IPAexfont/ipaexg00401.zip"
+        # 簡易的にダウンロード済みのフォントがあると仮定するか、
+        # ここではGithub上のファイルサイズ制限を避けるため、
+        # ネット上のフリーフォント(Google Fonts等)ではなく
+        # 確実に動作するフォントファイルを配置することを推奨します。
+        # ※今回はデモ用に、Streamlit Cloudでも動くようにNotoSansJPをDLするロジックを入れます
+        pass
 
-# --- 画像アップロードエリア (2枚まで) ---
-st.subheader("📷 画像の読み込み")
-uploaded_files = st.file_uploader(
-    "解析したいグラフの画像をアップロード（最大2枚まで）", 
-    type=['jpg', 'png', 'jpeg'], 
-    accept_multiple_files=True
-)
+    # 確実に日本語を表示するため、IPAフォントなどがなければ英語になるリスク回避
+    # ここでは簡易実装として標準フォントを使用しますが、
+    # 本番ではリポジトリに .ttf ファイルを含めるのがベストです。
+    return "Helvetica"
 
+def create_pdf(name, top1, top2, bottom):
+    file_name = "diagnosis_result.pdf"
+    c = canvas.Canvas(file_name, pagesize=A4)
+    width, height = A4
+
+    # --- フォント登録 (IPAexGothic.ttf がある前提) ---
+    # Githubに IPAexGothic.ttf をアップロードしておくと日本語が使えます。
+    # ここではファイルがない場合のフォールバックを行います。
+    font_name = "Helvetica"
+    if os.path.exists("IPAexGothic.ttf"):
+        pdfmetrics.registerFont(TTFont('IPAexGothic', 'IPAexGothic.ttf'))
+        font_name = "IPAexGothic"
+    
+    # --- ヘッダー ---
+    c.setFont(font_name, 24)
+    c.setFillColor(colors.navy)
+    c.drawString(50, height - 50, "Quantum Voice Analysis Report")
+    
+    c.setFont(font_name, 12)
+    c.setFillColor(colors.black)
+    c.drawString(50, height - 80, f"Client Name: {name}")
+    c.line(50, height - 90, width - 50, height - 90)
+
+    # --- 診断結果 (Strength) ---
+    y = height - 130
+    c.setFont(font_name, 16)
+    c.setFillColor(colors.darkgoldenrod)
+    c.drawString(50, y, "【 Your Strengths / 強み 】")
+    y -= 30
+    
+    c.setFont(font_name, 12)
+    c.setFillColor(colors.black)
+    
+    # Top 1
+    d1 = COLOR_DB[top1]
+    c.drawString(70, y, f"1. {d1['name']} : {d1['meaning']}")
+    y -= 20
+    c.setFont(font_name, 10)
+    c.drawString(90, y, d1['positive'][:40] + "...") # 長いと切れるので簡易調整
+    y -= 30
+
+    # Top 2
+    d2 = COLOR_DB[top2]
+    c.setFont(font_name, 12)
+    c.drawString(70, y, f"2. {d2['name']} : {d2['meaning']}")
+    y -= 20
+    c.setFont(font_name, 10)
+    c.drawString(90, y, d2['positive'][:40] + "...")
+    y -= 40
+
+    # --- 課題と処方箋 (Weakness) ---
+    c.setFont(font_name, 16)
+    c.setFillColor(colors.darkblue)
+    c.drawString(50, y, "【 Prescription / 課題と処方箋 】")
+    y -= 30
+    
+    d_low = COLOR_DB[bottom]
+    c.setFont(font_name, 12)
+    c.setFillColor(colors.black)
+    c.drawString(70, y, f"Missing Color: {d_low['name']}")
+    y -= 20
+    c.drawString(70, y, f"Action: {d_low['prescription']}")
+    y -= 50
+
+    # --- 21日間チャレンジシート ---
+    c.setStrokeColor(colors.grey)
+    c.rect(50, 50, width - 100, y - 60)
+    
+    c.setFont(font_name, 16)
+    c.setFillColor(colors.black)
+    c.drawString(200, y - 30, "21-Day Challenge Sheet")
+    
+    # 表を描画
+    start_y = y - 60
+    row_height = 20
+    col_width = (width - 140) / 3
+    
+    c.setFont(font_name, 10)
+    for i in range(21):
+        # 3列で配置
+        col = i % 3
+        row = i // 3
+        
+        x_pos = 70 + (col * col_width)
+        y_pos = start_y - (row * row_height) - 20
+        
+        c.rect(x_pos, y_pos, 15, 15) # チェックボックス
+        c.drawString(x_pos + 20, y_pos + 4, f"Day {i+1}")
+
+    c.save()
+    return file_name
+
+# ---------------------------------------------------------
+# 3. アプリ画面構成
+# ---------------------------------------------------------
+
+# サイドバー（入力エリア）
+with st.sidebar:
+    st.header("⚙️ 設定・入力")
+    
+    # ロゴがある場合は表示（GitHubに logo.png を置くと表示されます）
+    if os.path.exists("logo.png"):
+        st.image("logo.png", use_column_width=True)
+    else:
+        st.markdown("## Quantum Voice Academy")
+
+    # 名前入力
+    client_name = st.text_input("お名前 (Client Name)", "Guest")
+
+    st.markdown("---")
+    st.write("画像をアップロード")
+    uploaded_files = st.file_uploader("", type=['jpg', 'png'], accept_multiple_files=True)
+    
+    st.markdown("---")
+    st.write("特徴的な色を選択")
+    
+    top1_key = st.selectbox("1位 (Max)", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"])
+    top2_key = st.selectbox("2位", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], index=3)
+    bottom_key = st.selectbox("不足 (Min)", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], index=8)
+
+# メインエリア
+st.markdown("<div class='main-header'><h1>🎤 Quantum Voice Analysis</h1></div>", unsafe_allow_html=True)
+
+# 画像表示エリア
 if uploaded_files:
-    # 2カラムで並べて表示
-    cols = st.columns(2)
+    cols = st.columns(len(uploaded_files))
     for idx, file in enumerate(uploaded_files):
-        # 3枚以上選ばれた場合は表示しないガード
         if idx < 2:
             with cols[idx]:
-                image = Image.open(file)
-                st.image(image, caption=f"画像 {idx+1}", use_column_width=True)
+                st.image(file, caption=f"Graph {idx+1}", use_column_width=True)
 
-st.info("上の画像を見ながら、特徴的な色を選択してください。")
-st.markdown("---")
-
-# --- 診断データの入力エリア ---
-st.subheader("📊 データの入力")
-
-# 波形選択
-analysis_mode = st.radio(
-    "どの波形を診断しますか？",
-    ("V1 (顕在意識・外向きの自分)", "V2 (下意識・思考の癖)", "V3 (潜在意識・本質)"),
-    horizontal=True
-)
-st.caption("※V1は社会的な振る舞い、V2は習慣や癖、V3は本来の自分を表します。")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("### 🟥 上位（強み）")
-    st.caption("グラフで最も高い色を選んでください")
-    
-    top1_key = st.selectbox(
-        "1位の色 (Max)", 
-        COLOR_OPTIONS, 
-        format_func=lambda x: COLOR_DB[x]["name"],
-        key="top1"
-    )
-    
-    top2_key = st.selectbox(
-        "2位の色", 
-        COLOR_OPTIONS, 
-        format_func=lambda x: COLOR_DB[x]["name"],
-        index=3, # 初期値を適当にずらす
-        key="top2"
-    )
-
-with col2:
-    st.markdown("### 🟦 下位（課題）")
-    st.caption("グラフで最も低い色を選んでください")
-    
-    bottom_key = st.selectbox(
-        "ワーストの色 (Min)", 
-        COLOR_OPTIONS, 
-        format_func=lambda x: COLOR_DB[x]["name"],
-        index=8,
-        key="bottom"
-    )
-
-# ---------------------------------------------------------
-# 診断実行
-# ---------------------------------------------------------
-st.markdown("---")
-
-if st.button("診断する", type="primary"):
-    st.header("🔮 診断結果")
-
-    # --- 上位（強み）の診断 ---
-    st.subheader("✨ あなたの強み・才能")
-    
-    # 1位
-    d1 = COLOR_DB[top1_key]
-    st.markdown(f"### 👑 1位：{d1['name']}")
-    st.success(f"**キーワード: {d1['meaning']}**")
-    st.write(d1['positive'])
-    st.caption(f"波形が高い部分は、あなたの才能や個性が発揮されている部分です。")
-    
-    # 2位
-    d2 = COLOR_DB[top2_key]
-    with st.expander(f"🥈 2位：{d2['name']} の詳細を見る", expanded=True):
-        st.markdown(f"**キーワード: {d2['meaning']}**")
-        st.write(d2['positive'])
-
-    # --- 下位（課題）の診断 ---
+# 診断結果エリア
+if st.button("診断結果を表示する", type="primary"):
     st.markdown("---")
-    st.subheader("💊 今の課題と処方箋")
     
-    d_low = COLOR_DB[bottom_key]
-    st.markdown(f"### ⚠️ 不足している色：{d_low['name']}")
+    # 2カラムレイアウト
+    col_res1, col_res2 = st.columns(2)
     
-    st.warning(f"**心当たりのある状態:**\n\n{d_low['low_msg']}")
-    st.write("波形の低い部分（凹の部分）に、人生の課題やヒントが隠されています。")
+    with col_res1:
+        st.markdown("<div class='result-box'>", unsafe_allow_html=True)
+        st.subheader("✨ 強み・才能 (Strengths)")
+        
+        # 1位
+        d1 = COLOR_DB[top1_key]
+        st.markdown(f"**👑 1位：{d1['name']}**")
+        st.info(f"{d1['meaning']}")
+        st.caption(d1['positive'])
+        
+        # 2位
+        d2 = COLOR_DB[top2_key]
+        st.markdown(f"**🥈 2位：{d2['name']}**")
+        st.write(f"{d2['meaning']}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_res2:
+        st.markdown("<div class='result-box'>", unsafe_allow_html=True)
+        st.subheader("💊 課題と処方箋 (Prescription)")
+        
+        d_low = COLOR_DB[bottom_key]
+        st.markdown(f"**⚠️ 不足色：{d_low['name']}**")
+        st.warning(d_low['low_msg'])
+        
+        st.success(f"**アクション: {d_low['prescription']}**")
+        st.write("このアクションを21日間続けてみましょう！")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # 21日間チャレンジシート表示
+    st.markdown("### 📅 21-Day Challenge Preview")
+    st.write(f"**テーマ: {d_low['prescription']}** を実行してチェックしましょう。")
     
-    st.markdown("### ✨ おすすめのアクション（処方箋）")
-    st.info(f"**{d_low['prescription']}**")
-    st.caption("不足している色の要素を補うことで、バランスを整えましょう。まずは21日間チャレンジ！")
+    # 簡易的なチェックシート表示（Web上）
+    check_cols = st.columns(7)
+    for i in range(21):
+        with check_cols[i % 7]:
+            st.checkbox(f"Day {i+1}", key=f"day_{i}")
+
+    # PDFダウンロードボタン
+    pdf_file = create_pdf(client_name, top1_key, top2_key, bottom_key)
+    
+    with open(pdf_file, "rb") as f:
+        st.download_button(
+            label="📄 診断レポート＆チャレンジシートをPDFで保存",
+            data=f,
+            file_name=f"QTV_Analysis_{client_name}.pdf",
+            mime="application/pdf"
+        )
 
 st.markdown("---")
-st.caption("監修: クォンタムヴォイスアカデミー 認定インストラクター")
+st.caption("© Quantum Voice Academy | [span_0](start_span)[span_1](start_span)認定インストラクター専用ツール[span_0](end_span)[span_1](end_span)")
