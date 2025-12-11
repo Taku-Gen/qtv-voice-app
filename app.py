@@ -1,8 +1,10 @@
 import streamlit as st
+from PIL import Image
 
 # ---------------------------------------------------------
-# 1. データベース（12色の定義）
+# 1. データベース（テキストに基づく12色の定義）
 # ---------------------------------------------------------
+# 引用元: テキスト P.71~82, P.120-121
 COLOR_DB = {
     "Red": {
         "name": "レッド (R)",
@@ -97,7 +99,31 @@ COLOR_OPTIONS = list(COLOR_DB.keys())
 # 2. アプリ画面構成
 # ---------------------------------------------------------
 st.title("🎤 QTV 声解析・診断アプリ")
-st.caption("グラフを見て、「強く出ている色」と「出ていない色」を選んでください。")
+st.caption("グラフの画像を読み込み、その結果を選択して診断します。")
+
+# --- 画像アップロードエリア (2枚まで) ---
+st.subheader("📷 画像の読み込み")
+uploaded_files = st.file_uploader(
+    "解析したいグラフの画像をアップロード（最大2枚まで）", 
+    type=['jpg', 'png', 'jpeg'], 
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    # 2カラムで並べて表示
+    cols = st.columns(2)
+    for idx, file in enumerate(uploaded_files):
+        # 3枚以上選ばれた場合は表示しないガード
+        if idx < 2:
+            with cols[idx]:
+                image = Image.open(file)
+                st.image(image, caption=f"画像 {idx+1}", use_column_width=True)
+
+st.info("上の画像を見ながら、特徴的な色を選択してください。")
+st.markdown("---")
+
+# --- 診断データの入力エリア ---
+st.subheader("📊 データの入力")
 
 # 波形選択
 analysis_mode = st.radio(
@@ -105,21 +131,16 @@ analysis_mode = st.radio(
     ("V1 (顕在意識・外向きの自分)", "V2 (下意識・思考の癖)", "V3 (潜在意識・本質)"),
     horizontal=True
 )
-st.info("※V1は社会的な振る舞い、V2は習慣や癖、V3は本来の自分を表します。")
+st.caption("※V1は社会的な振る舞い、V2は習慣や癖、V3は本来の自分を表します。")
 
-st.markdown("---")
-
-# ---------------------------------------------------------
-# 入力エリア (上位2つ、下位1つ)
-# ---------------------------------------------------------
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("🟥 上位（強み）")
-    st.caption("グラフの「Max」に近い色を選んでください")
+    st.markdown("### 🟥 上位（強み）")
+    st.caption("グラフで最も高い色を選んでください")
     
     top1_key = st.selectbox(
-        "1位の色", 
+        "1位の色 (Max)", 
         COLOR_OPTIONS, 
         format_func=lambda x: COLOR_DB[x]["name"],
         key="top1"
@@ -134,11 +155,11 @@ with col1:
     )
 
 with col2:
-    st.subheader("🟦 下位（課題）")
-    st.caption("グラフの「Min」に近い色を選んでください")
+    st.markdown("### 🟦 下位（課題）")
+    st.caption("グラフで最も低い色を選んでください")
     
     bottom_key = st.selectbox(
-        "ワースト（不足）の色", 
+        "ワーストの色 (Min)", 
         COLOR_OPTIONS, 
         format_func=lambda x: COLOR_DB[x]["name"],
         index=8,
@@ -151,7 +172,7 @@ with col2:
 st.markdown("---")
 
 if st.button("診断する", type="primary"):
-    st.header("📊 診断結果")
+    st.header("🔮 診断結果")
 
     # --- 上位（強み）の診断 ---
     st.subheader("✨ あなたの強み・才能")
