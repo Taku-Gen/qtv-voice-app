@@ -14,10 +14,10 @@ st.set_page_config(
     page_title="QTV 声解析・診断システム",
     page_icon="🎤",
     layout="wide",
-    initial_sidebar_state="collapsed" # サイドバーは閉じておく
+    initial_sidebar_state="collapsed"
 )
 
-# カラーコード定義 (表示用)
+# カラーコード定義
 HEX_COLORS = {
     "Red": "#FF0000", "Coral": "#FF7F50", "Orange": "#FFA500", 
     "Gold": "#FFD700", "Yellow": "#FFFF00", "Lime": "#BFFF00",
@@ -25,27 +25,33 @@ HEX_COLORS = {
     "Navy": "#000080", "Violet": "#800080", "Magenta": "#FF00FF"
 }
 
-# カスタムCSS（視認性向上）
+# カスタムCSS (視認性向上・濃い文字)
 st.markdown("""
     <style>
-    /* 全体の文字色を濃くする */
+    /* アプリ全体の背景と文字色 */
     .stApp {
         background-color: #FAFAFA !important;
         color: #333333 !important;
     }
-    p, h1, h2, h3, h4, h5, h6, span, div, label, li {
-        color: #1E3A8A !important; /* ネイビーブルー */
+    
+    /* 文字色を強制的に濃いネイビーに */
+    p, h1, h2, h3, h4, h5, h6, span, div, label, li, .stMarkdown {
+        color: #1E3A8A !important;
     }
-    /* ヘッダー */
+    
+    /* ヘッダーボックス */
     .header-box {
         background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
         padding: 20px;
         border-radius: 10px;
         text-align: center;
         margin-bottom: 20px;
-        color: white !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .header-box h1, .header-box div { color: white !important; }
+    /* ヘッダー内の文字は白 */
+    .header-box h1, .header-box div, .header-box p {
+        color: #FFFFFF !important;
+    }
     
     /* カードデザイン */
     .card {
@@ -54,11 +60,19 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         margin-bottom: 10px;
-        border-left: 5px solid #1E3A8A;
+        border-left: 6px solid #1E3A8A;
     }
+    
     /* 色バッジ */
     .color-badge {
-        width: 100%; height: 10px; border-radius: 5px; margin: 5px 0;
+        width: 100%; height: 12px; border-radius: 6px; margin: 8px 0;
+    }
+    
+    /* PDFダウンロードボタンの調整 */
+    div.stDownloadButton > button {
+        background-color: #1E3A8A;
+        color: white !important;
+        width: 100%;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -157,36 +171,37 @@ COLOR_OPTIONS = list(COLOR_DB.keys())
 # ---------------------------------------------------------
 # 2. PDF生成機能
 # ---------------------------------------------------------
-@st.cache_resource
-def setup_font():
-    return "Helvetica"
-
 def create_pdf(name, top1, top2, bottom):
     file_name = f"QTV_{name}.pdf"
     c = canvas.Canvas(file_name, pagesize=A4)
     width, height = A4
     
+    # フォント設定 (日本語対応)
+    # IPAexGothic.ttf が同じフォルダにあれば使用、なければHelvetica(英語)
     font_name = "Helvetica"
     if os.path.exists("IPAexGothic.ttf"):
         pdfmetrics.registerFont(TTFont('IPAexGothic', 'IPAexGothic.ttf'))
         font_name = "IPAexGothic"
     
-    # Header
-    c.setFillColorRGB(0.05, 0.1, 0.3)
+    # ヘッダー背景
+    c.setFillColorRGB(0.05, 0.1, 0.3) # Navy
     c.rect(0, height-100, width, 100, fill=1)
+    
+    # タイトル
     c.setFillColor(colors.white)
     c.setFont(font_name, 24)
     c.drawCentredString(width/2, height-60, "Quantum Voice Analysis Report")
     
+    # クライアント名
     c.setFillColor(colors.black)
     c.setFont(font_name, 12)
-    c.drawString(50, height-130, f"Client: {name}")
+    c.drawString(50, height-130, f"Client Name: {name}")
     c.line(50, height-140, width-50, height-140)
 
-    # Strengths
+    # --- 強み (Strengths) ---
     y = height - 180
     c.setFont(font_name, 16)
-    c.setFillColorRGB(0.8, 0.6, 0.2)
+    c.setFillColorRGB(0.8, 0.6, 0.2) # Gold
     c.drawString(50, y, "【 Your Strengths / 強み・才能 】")
     y -= 30
     
@@ -194,21 +209,23 @@ def create_pdf(name, top1, top2, bottom):
     d1 = COLOR_DB[top1]
     d2 = COLOR_DB[top2]
     
+    # 1位
     c.setFont(font_name, 14)
     c.drawString(60, y, f"1. {d1['name']}")
     c.setFont(font_name, 10)
     c.drawString(80, y-15, d1['meaning'])
     y -= 50
     
+    # 2位
     c.setFont(font_name, 14)
     c.drawString(60, y, f"2. {d2['name']}")
     c.setFont(font_name, 10)
     c.drawString(80, y-15, d2['meaning'])
     y -= 60
 
-    # Prescription
+    # --- 課題 (Prescription) ---
     c.setFont(font_name, 16)
-    c.setFillColorRGB(0.05, 0.1, 0.3)
+    c.setFillColorRGB(0.05, 0.1, 0.3) # Navy
     c.drawString(50, y, "【 Prescription / 処方箋 】")
     y -= 30
     
@@ -220,7 +237,7 @@ def create_pdf(name, top1, top2, bottom):
     c.drawString(60, y-20, f"Action: {d_low['prescription']}")
     y -= 70
 
-    # Challenge Sheet
+    # --- 21日間シート ---
     c.setStrokeColor(colors.grey)
     c.rect(50, 50, width-100, y-60)
     c.setFont(font_name, 14)
@@ -230,6 +247,7 @@ def create_pdf(name, top1, top2, bottom):
     box_w = (width-140)/3
     box_h = 25
     c.setFont(font_name, 10)
+    
     for i in range(21):
         col = i % 3
         row = i // 3
@@ -245,7 +263,7 @@ def create_pdf(name, top1, top2, bottom):
 # 3. アプリ画面構成 (UI/UX)
 # ---------------------------------------------------------
 
-# ヘッダーエリア
+# ヘッダー
 st.markdown("""
 <div class="header-box">
     <h1>QTV QUANTUM VOICE ANALYSIS</h1>
@@ -253,11 +271,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 入力フォーム（2カラム）
-left_col, right_col = st.columns([1, 1])
+# 入力フォーム (左右カラム)
+col_left, col_right = st.columns([1, 1])
 
-# --- 左側：画像アップロードと表示 ---
-with left_col:
+# 左カラム：画像アップロード
+with col_left:
     st.subheader("📷 画像の読み込み")
     uploaded_files = st.file_uploader(
         "グラフ画像を2枚まで選択", 
@@ -265,15 +283,15 @@ with left_col:
         accept_multiple_files=True
     )
     
+    # 画像があれば表示
     if uploaded_files:
-        # 画像を横並びで表示
         img_cols = st.columns(2)
         for idx, file in enumerate(uploaded_files):
             if idx < 2:
                 img_cols[idx].image(file, caption=f"Graph {idx+1}", use_column_width=True)
 
-# --- 右側：診断データの入力 ---
-with right_col:
+# 右カラム：データ入力
+with col_right:
     st.subheader("📊 データの入力")
     
     client_name = st.text_input("クライアント名 (PDF用)", "Guest")
@@ -286,42 +304,42 @@ with right_col:
     
     st.write("---")
     
-    col_input1, col_input2 = st.columns(2)
-    with col_input1:
-        st.markdown("**🟥 上位 (強み)**")
-        top1 = st.selectbox("1位 (Max)", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"])
-        top2 = st.selectbox("2位", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], index=3)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**🟥 上位 (Max)**")
+        top1 = st.selectbox("1位", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], key="t1")
+        top2 = st.selectbox("2位", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], index=3, key="t2")
     
-    with col_input2:
-        st.markdown("**🟦 下位 (課題)**")
-        bottom = st.selectbox("不足 (Min)", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], index=8)
+    with c2:
+        st.markdown("**🟦 下位 (Min)**")
+        bottom = st.selectbox("不足", COLOR_OPTIONS, format_func=lambda x: COLOR_DB[x]["name"], index=8, key="bt")
 
-    # 診断ボタン
-    st.write("") # スペーサー
+    st.write("") # スペース
     do_analyze = st.button("診断する", type="primary", use_container_width=True)
 
 st.markdown("---")
 
 # ---------------------------------------------------------
-# 4. 結果表示エリア
+# 4. 結果表示
 # ---------------------------------------------------------
 if do_analyze:
-    # タブで表示を切り替え
+    # タブ設定
     tab1, tab2, tab3 = st.tabs(["📊 診断結果", "📄 PDF発行", "ℹ️ 色の解説"])
 
-    # --- タブ1: 診断結果 ---
+    # --- Tab 1: 診断 ---
     with tab1:
         st.markdown("### ✨ あなたの才能と課題")
         
         col_res1, col_res2 = st.columns(2)
         
+        # 強み
         with col_res1:
             d1 = COLOR_DB[top1]
             d2 = COLOR_DB[top2]
             
             st.markdown(f"""
             <div class="card">
-                <h3 style="color:#C9A063;">👑 1位：{d1['name']}</h3>
+                <h3 style="color:#C9A063 !important;">👑 1位：{d1['name']}</h3>
                 <div class="color-badge" style="background-color:{d1['hex']};"></div>
                 <p><b>{d1['meaning']}</b></p>
                 <p>{d1['positive']}</p>
@@ -335,45 +353,45 @@ if do_analyze:
                 <p>{d2['positive']}</p>
                 """, unsafe_allow_html=True)
 
+        # 課題
         with col_res2:
             d_low = COLOR_DB[bottom]
             st.markdown(f"""
-            <div class="card" style="border-left: 5px solid {d_low['hex']};">
-                <h3 style="color:#1E3A8A;">⚠️ 課題と処方箋 ({d_low['name']})</h3>
+            <div class="card" style="border-left: 6px solid {d_low['hex']};">
+                <h3 style="color:#1E3A8A !important;">⚠️ 課題と処方箋 ({d_low['name']})</h3>
                 <div class="color-badge" style="background-color:{d_low['hex']}; opacity: 0.3;"></div>
                 <p><b>状態:</b><br>{d_low['low_msg']}</p>
                 <hr>
-                <p style="font-weight:bold; color:#1E3A8A;">💊 アクション:<br>{d_low['prescription']}</p>
+                <p style="font-weight:bold; color:#1E3A8A !important;">💊 アクション:<br>{d_low['prescription']}</p>
             </div>
             """, unsafe_allow_html=True)
 
-    # --- タブ2: PDF発行 ---
+    # --- Tab 2: PDF ---
     with tab2:
         st.markdown("### 📄 診断レポート＆21日間シート")
         
-        col_pdf1, col_pdf2 = st.columns([2, 1])
-        with col_pdf1:
+        c_pdf1, c_pdf2 = st.columns([2, 1])
+        with c_pdf1:
             st.info(f"作成者: **{client_name} 様**")
             st.write(f"今回のテーマ: **{COLOR_DB[bottom]['prescription']}**")
-            st.caption("※21日間、このアクションを意識して実行しましょう。")
         
-        with col_pdf2:
+        with c_pdf2:
             pdf_path = create_pdf(client_name, top1, top2, bottom)
             with open(pdf_path, "rb") as f:
                 st.download_button(
                     label="📥 PDFをダウンロード",
                     data=f,
                     file_name=f"QTV_{client_name}.pdf",
-                    mime="application/pdf",
-                    type="primary"
+                    mime="application/pdf"
                 )
         
         st.markdown("#### プレビュー: 21-Day Challenge")
+        # チェックボックスプレビュー
         chk_cols = st.columns(7)
         for i in range(21):
-            chk_cols[i%7].checkbox(f"Day{i+1}", key=f"chk_{i}")
+            chk_cols[i%7].checkbox(f"{i+1}", key=f"chk_{i}")
 
-    # --- タブ3: 解説 ---
+    # --- Tab 3: 解説 ---
     with tab3:
         st.markdown("### 🌈 12色の意味リスト")
         for key, val in COLOR_DB.items():
@@ -385,4 +403,4 @@ if do_analyze:
             """, unsafe_allow_html=True)
 
 st.markdown("---")
-[span_0](start_span)st.caption("© Quantum Voice Academy | 認定インストラクター専用ツール[span_0](end_span)")
+st.caption("© Quantum Voice Academy | 認定インストラクター専用ツール")
