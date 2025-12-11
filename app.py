@@ -1,7 +1,8 @@
 import streamlit as st
-import cv2
 import numpy as np
 from PIL import Image
+import easyocr
+import math
 
 # ---------------------------------------------------------
 # 1. データベース（テキストに基づく12色の定義）
@@ -105,158 +106,174 @@ COLOR_DB = {
     }
 }
 
+# 12色の並び順リスト（ユーザー指定）
+COLOR_ORDER = [
+    "Red", "Coral", "Orange", "Gold", "Yellow", "Lime",
+    "Green", "Aqua", "Blue", "Navy", "Violet", "Magenta"
+]
+
 # ---------------------------------------------------------
-# 2. 画像解析ロジック（OpenCV） - 精度向上版
+# 2. 文字認識ロジック (EasyOCR)
 # ---------------------------------------------------------
-def analyze_graph_colors(image, debug=False):
-    # 画像の前処理
+@st.cache_resource
+def load_reader():
+    # 英語・数字モードで読み込み（GPUがあれば使う）
+    return easyocr.Reader(['en'], gpu=False)
+
+def extract_numbers_from_image(image):
+    reader = load_reader()
     img_array = np.array(image)
-    if img_array.ndim == 2:
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-    elif img_array.shape[2] == 4:
-        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
-        
-    img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2HSV)
     
-    color_counts = {}
+    # OCR実行
+    results = reader.readtext(img_array)
     
-    # ---------------------------------------------------------
-    # 【重要】色の判定基準（HSV範囲）の厳格化
-    # 背景（黒・濃い紺）を拾わないように、彩度(S)と明度(V)の下限を引き上げ
-    # 下限値: [色相(0-180), 彩度(0-255), 明度(0-255)]
-    # ---------------------------------------------------------
-    definitions = {
-        # 赤: 明度を少し下げても拾えるようにするが、暗すぎないように
-        "Red":     ([0, 100, 100], [7, 255, 255]),      
-        "Red2":    ([175, 100, 100], [180, 255, 255]),
-        
-        # コーラル〜オレンジ〜ゴールドは明るいので明度高め設定
-        "Coral":   ([7, 100, 100], [15, 255, 255]),     
-        "Orange":  ([15, 100, 100], [25, 255, 255]),    
-        "Gold":    ([25, 100, 100], [30, 255, 255]),
-        "Yellow":  ([30, 80, 100], [35, 255, 255]),     # 黄色は白飛びしやすいので彩度下限を少し甘く
-        
-        # 緑系
-        "Lime":    ([35, 80, 100], [50, 255, 255]),     
-        "Green":   ([50, 80, 100], [75, 255, 255]),     
-        
-        # 【重要】青系の修正：背景と混ざらないよう、明度(V)と彩度(S)の下限を高く設定
-        "Aqua":    ([75, 120, 120], [95, 255, 255]),    
-        "Blue":    ([95, 150, 120], [115, 255, 255]),   # 彩度150以上、明度120以上必須
-        "Navy":    ([115, 150, 120], [135, 255, 255]),  # ここが一番背景と被りやすい
-        
-        # 紫・ピンク
-        "Violet":  ([135, 80, 100], [155, 255, 255]),   
-        "Magenta": ([155, 80, 100], [175, 255, 255]),   
-    }
-
-    total_pixels = 0
+    numbers = []
     
-    # デバッグ表示
-    if debug:
-        st.markdown("### 🔍 検証モード：色の抽出状況")
-        st.caption("背景が黒く、グラフの部分だけが白く光っていれば正常です。背景が白くなっていたら調整が必要です。")
+    # 全テキストの中心座標を計算（円の中心を推定するため）
+    all_centers = []
     
-    cols = st.columns(4) if debug else None
-    col_idx = 0
-
-    for color_name, (lower, upper) in definitions.items():
-        # マスク作成
-        mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
-        count = cv2.countNonZero(mask)
-        
-        # Red2はRedに統合
-        target_name = "Red" if color_name == "Red2" else color_name
-        
-        # 検証モード：認識した部分を画像で表示
-        if debug:
-            # 実際にカウントされたピクセルがある場合のみ表示
-            if count > 0:
-                with cols[col_idx % 4]:
-                    st.image(mask, caption=f"{color_name} ({count}px)", use_column_width=True)
-                    col_idx += 1
-
-        if target_name in color_counts:
-            color_counts[target_name] += count
-        else:
-            color_counts[target_name] = count
+    for (bbox, text, prob) in results:
+        # "%" を含んでいるか、数字だけのものを抽出
+        clean_text = text.replace('%', '').strip()
+        if clean_text.isdigit():
+            val = int(clean_text)
             
-        if color_name != "Red2":
-             total_pixels += count
-
-    results = []
-    
-    # 計算ロジック修正: 背景が含まれていない前提で計算
-    # ただし、ノイズ（極端に少ないピクセル）は除外する
-    if total_pixels > 0:
-        for name, count in color_counts.items():
-            percentage = (count / total_pixels) * 100
-            # グラフとして視認できるレベル（全体の2%以上）のみ採用
-            # これにより、背景の誤検出ノイズをカット
-            if percentage > 2.0: 
-                results.append((name, percentage))
+            # バウンディングボックスの中心計算
+            (tl, tr, br, bl) = bbox
+            center_x = (tl[0] + br[0]) / 2
+            center_y = (tl[1] + br[1]) / 2
             
-    results.sort(key=lambda x: x[1], reverse=True)
-    return results
+            all_centers.append([center_x, center_y])
+            numbers.append({
+                "value": val,
+                "x": center_x,
+                "y": center_y,
+                "angle": 0
+            })
+    
+    # グラフの中心を推定（全数字の重心）
+    if not all_centers:
+        return {}
+        
+    chart_center = np.mean(all_centers, axis=0)
+    
+    # 角度を計算 (atan2)
+    for num in numbers:
+        dx = num["x"] - chart_center[0]
+        dy = num["y"] - chart_center[1]
+        # Y軸は下向き正なので反転させて計算
+        angle = math.atan2(-dy, dx) # -PI to PI
+        # 度数法に変換 (0~360)
+        deg = math.degrees(angle)
+        if deg < 0:
+            deg += 360
+        num["angle"] = deg
+        
+    # 角度でソート（反時計回りかどうかは画像の向きによるが、通常角度順で並ぶ）
+    # ユーザー指定: Red(左=180度付近?)から反時計回り
+    # OCRで取れた順序を角度順に並べる
+    numbers.sort(key=lambda x: x["angle"], reverse=False) 
+    
+    # 検出された数字をリストで返す（最大12個）
+    detected_values = [n["value"] for n in numbers]
+    
+    return detected_values
 
 # ---------------------------------------------------------
 # 3. アプリ画面構成
 # ---------------------------------------------------------
-st.title("🎤 QTV 声解析・診断アプリ")
-st.write("解析したいグラフの画像を選択してください。")
-
-# サイドバー設定
-st.sidebar.header("設定")
-debug_mode = st.sidebar.checkbox("検証モード (色の認識状況を見る)", value=False)
+st.title("🎤 QTV 声解析・診断アプリ (数値入力版)")
+st.caption("円グラフの数値を読み取って診断します。画像が読み取れない場合は、手動で数値を入力してください。")
 
 analysis_mode = st.radio(
     "どの波形を診断しますか？",
     ("V1 (顕在意識・外向きの自分)", "V2 (下意識・思考の癖)", "V3 (潜在意識・本質)")
 )
 
-target_file = st.file_uploader("フォルダまたはフォトライブラリから選択", type=['jpg', 'png', 'jpeg'])
+target_file = st.file_uploader("グラフ画像をアップロード (自動読み取り)", type=['jpg', 'png', 'jpeg'])
+
+# デフォルト値（全て0）
+input_values = {color: 0 for color in COLOR_ORDER}
 
 if target_file is not None:
     image = Image.open(target_file)
-    st.image(image, caption='解析対象の画像', use_column_width=True)
+    st.image(image, caption='アップロード画像', use_column_width=True)
     
-    if st.button("診断開始"):
-        with st.spinner('解析中...12色をスキャンしています...'):
-            results = analyze_graph_colors(image, debug=debug_mode)
-            
-            if not results:
-                st.error("有効な色が検出できませんでした。グラフ部分を拡大して撮影するか、照明を調整してください。")
-            else:
-                st.success("解析完了！")
+    if st.button("画像から数値を読み取る"):
+        with st.spinner('文字を読み取っています...（初回は時間がかかります）'):
+            try:
+                detected_list = extract_numbers_from_image(image)
+                st.success(f"{len(detected_list)}個の数値を検出しました！")
                 
-                # -------------------------------------------------
-                # 結果表示エリア
-                # -------------------------------------------------
-                
-                # 1位の色を表示
-                top_color, top_score = results[0]
-                if top_color in COLOR_DB:
-                    data = COLOR_DB[top_color]
-                    
-                    st.markdown(f"## 👑 メインカラー：{data['name']}")
-                    st.markdown(f"### エネルギー割合: **{top_score:.1f}%**")
-                    
-                    st.info(f"**キーワード: {data['meaning']}**")
-                    st.write(data['positive'])
-                    
-                    with st.expander(f"⚠️ {data['name']} の課題と処方箋", expanded=True):
-                        st.warning(data['low_msg'])
-                        st.markdown(f"**💊 おすすめアクション: {data['prescription']}**")
-
-                st.markdown("---")
-                st.markdown("### 📊 全体のエネルギーバランス")
-                
-                for color_name, score in results:
-                    if color_name in COLOR_DB:
-                        d = COLOR_DB[color_name]
-                        st.write(f"**{d['name']}**: {score:.1f}%")
-                        st.progress(min(int(score), 100))
+                # 検出された数値を順番に割り当て（仮）
+                # ※完全な自動割り当ては難しいため、検出順に埋めてユーザーに修正させる
+                for i, val in enumerate(detected_list):
+                    if i < 12:
+                        input_values[COLOR_ORDER[i]] = val
                         
+            except Exception as e:
+                st.error(f"読み取りエラー: {e}")
+
+# ---------------------------------------------------------
+# 入力フォーム（手動修正用）
+# ---------------------------------------------------------
+st.markdown("### 🔢 数値の確認・修正")
+st.info("画像から読み取った数値が以下に入ります。間違っている箇所や空欄を修正してください。")
+
+cols = st.columns(3) # 3列で表示
+user_inputs = {}
+
+# 12色の入力欄を作る
+for i, color_key in enumerate(COLOR_ORDER):
+    color_data = COLOR_DB[color_key]
+    with cols[i % 3]:
+        # セッションステートを使って値を保持・更新できるようにする
+        # デフォルト値はOCRで取れた値、なければ0
+        default_val = input_values[color_key]
+        val = st.number_input(
+            f"{color_data['name']}",
+            min_value=0, 
+            max_value=100,
+            value=default_val,
+            key=f"input_{color_key}"
+        )
+        user_inputs[color_key] = val
+
+# ---------------------------------------------------------
+# 診断ボタン
+# ---------------------------------------------------------
+if st.button("この数値で診断する"):
+    # 値の大きい順にソート
+    sorted_colors = sorted(user_inputs.items(), key=lambda x: x[1], reverse=True)
+    
     st.markdown("---")
-    st.caption("監修: クォンタムヴォイスアカデミー 認定インストラクター")
+    st.markdown("## 📊 診断結果")
+    
+    # 上位3つを表示
+    for rank, (color_key, score) in enumerate(sorted_colors[:3]):
+        data = COLOR_DB[color_key]
+        
+        if rank == 0:
+            st.markdown(f"## 👑 1位：{data['name']} ({score}%)")
+            st.success(f"**キーワード: {data['meaning']}**")
+            st.write(data['positive'])
+            
+            with st.expander(f"⚠️ {data['name']} の課題と処方箋", expanded=True):
+                st.warning(data['low_msg'])
+                st.markdown(f"**💊 おすすめアクション: {data['prescription']}**")
+        else:
+            st.markdown(f"**{rank+1}位：{data['name']} ({score}%)**")
+            with st.expander(f"詳細を見る"):
+                st.write(f"キーワード: {data['meaning']}")
+                st.info(f"処方箋: {data['prescription']}")
+    
+    # グラフ表示（簡易バー）
+    st.markdown("### 全体のバランス")
+    for color_key in COLOR_ORDER:
+        score = user_inputs[color_key]
+        if score > 0:
+            st.text(f"{COLOR_DB[color_key]['name']}")
+            st.progress(score)
+
+st.markdown("---")
+st.caption("監修: クォンタムヴォイスアカデミー 認定インストラクター")
