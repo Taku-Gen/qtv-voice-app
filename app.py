@@ -106,14 +106,14 @@ COLOR_DB = {
 }
 
 # ---------------------------------------------------------
-# 2. 画像解析ロジック（OpenCV）
+# 2. 画像解析ロジック（OpenCV） - 精度向上版
 # ---------------------------------------------------------
 def analyze_graph_colors(image, debug=False):
     # 画像の前処理
     img_array = np.array(image)
-    if img_array.ndim == 2:  # グレースケールの場合
+    if img_array.ndim == 2:
         img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2BGR)
-    elif img_array.shape[2] == 4:  # RGBAの場合
+    elif img_array.shape[2] == 4:
         img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2BGR)
         
     img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
@@ -121,30 +121,42 @@ def analyze_graph_colors(image, debug=False):
     
     color_counts = {}
     
-    # 12色の定義（HSV範囲: OpenCVのHは0-180）
-    # R, C, O, G, Y, L, E, A, B, N, V, M の順序
+    # ---------------------------------------------------------
+    # 【重要】色の判定基準（HSV範囲）の厳格化
+    # 背景（黒・濃い紺）を拾わないように、彩度(S)と明度(V)の下限を引き上げ
+    # 下限値: [色相(0-180), 彩度(0-255), 明度(0-255)]
+    # ---------------------------------------------------------
     definitions = {
-        "Red":     ([0, 80, 80], [7, 255, 255]),        # 赤
-        "Red2":    ([175, 80, 80], [180, 255, 255]),    # 赤（反対側）
-        "Coral":   ([7, 80, 80], [15, 255, 255]),       # コーラルレッド
-        "Orange":  ([15, 80, 80], [25, 255, 255]),      # オレンジ
-        "Gold":    ([25, 80, 80], [30, 255, 255]),      # ゴールド
-        "Yellow":  ([30, 80, 80], [35, 255, 255]),      # イエロー
-        "Lime":    ([35, 80, 80], [50, 255, 255]),      # ライムグリーン
-        "Green":   ([50, 80, 80], [70, 255, 255]),      # グリーン
-        "Aqua":    ([70, 80, 80], [95, 255, 255]),      # アクアブルー
-        "Blue":    ([95, 80, 80], [115, 255, 255]),     # ブルー
-        "Navy":    ([115, 80, 80], [135, 255, 255]),    # ネイビーブルー
-        "Violet":  ([135, 60, 60], [155, 255, 255]),    # ヴァイオレット
-        "Magenta": ([155, 60, 60], [175, 255, 255]),    # マゼンタピンク
+        # 赤: 明度を少し下げても拾えるようにするが、暗すぎないように
+        "Red":     ([0, 100, 100], [7, 255, 255]),      
+        "Red2":    ([175, 100, 100], [180, 255, 255]),
+        
+        # コーラル〜オレンジ〜ゴールドは明るいので明度高め設定
+        "Coral":   ([7, 100, 100], [15, 255, 255]),     
+        "Orange":  ([15, 100, 100], [25, 255, 255]),    
+        "Gold":    ([25, 100, 100], [30, 255, 255]),
+        "Yellow":  ([30, 80, 100], [35, 255, 255]),     # 黄色は白飛びしやすいので彩度下限を少し甘く
+        
+        # 緑系
+        "Lime":    ([35, 80, 100], [50, 255, 255]),     
+        "Green":   ([50, 80, 100], [75, 255, 255]),     
+        
+        # 【重要】青系の修正：背景と混ざらないよう、明度(V)と彩度(S)の下限を高く設定
+        "Aqua":    ([75, 120, 120], [95, 255, 255]),    
+        "Blue":    ([95, 150, 120], [115, 255, 255]),   # 彩度150以上、明度120以上必須
+        "Navy":    ([115, 150, 120], [135, 255, 255]),  # ここが一番背景と被りやすい
+        
+        # 紫・ピンク
+        "Violet":  ([135, 80, 100], [155, 255, 255]),   
+        "Magenta": ([155, 80, 100], [175, 255, 255]),   
     }
 
     total_pixels = 0
     
-    # デバッグ表示用（検証モードがONのときだけ表示）
+    # デバッグ表示
     if debug:
         st.markdown("### 🔍 検証モード：色の抽出状況")
-        st.caption("白く光っている部分が、その色として認識されています。")
+        st.caption("背景が黒く、グラフの部分だけが白く光っていれば正常です。背景が白くなっていたら調整が必要です。")
     
     cols = st.columns(4) if debug else None
     col_idx = 0
@@ -154,30 +166,35 @@ def analyze_graph_colors(image, debug=False):
         mask = cv2.inRange(hsv, np.array(lower), np.array(upper))
         count = cv2.countNonZero(mask)
         
-        # 検証モード：認識した部分を画像で表示
-        if debug and count > 0:
-            with cols[col_idx % 4]:
-                st.image(mask, caption=f"{color_name}", use_column_width=True)
-                col_idx += 1
-
         # Red2はRedに統合
         target_name = "Red" if color_name == "Red2" else color_name
         
+        # 検証モード：認識した部分を画像で表示
+        if debug:
+            # 実際にカウントされたピクセルがある場合のみ表示
+            if count > 0:
+                with cols[col_idx % 4]:
+                    st.image(mask, caption=f"{color_name} ({count}px)", use_column_width=True)
+                    col_idx += 1
+
         if target_name in color_counts:
             color_counts[target_name] += count
         else:
             color_counts[target_name] = count
             
-        # 合計ピクセル数（重複を考慮せず単純加算）
         if color_name != "Red2":
              total_pixels += count
 
     results = []
-    # 全体の0.5%以上ある色だけを採用
+    
+    # 計算ロジック修正: 背景が含まれていない前提で計算
+    # ただし、ノイズ（極端に少ないピクセル）は除外する
     if total_pixels > 0:
         for name, count in color_counts.items():
             percentage = (count / total_pixels) * 100
-            if percentage > 0.5: 
+            # グラフとして視認できるレベル（全体の2%以上）のみ採用
+            # これにより、背景の誤検出ノイズをカット
+            if percentage > 2.0: 
                 results.append((name, percentage))
             
     results.sort(key=lambda x: x[1], reverse=True)
@@ -198,7 +215,6 @@ analysis_mode = st.radio(
     ("V1 (顕在意識・外向きの自分)", "V2 (下意識・思考の癖)", "V3 (潜在意識・本質)")
 )
 
-# 【変更点】カメラ機能を削除し、ファイルアップロードのみに変更
 target_file = st.file_uploader("フォルダまたはフォトライブラリから選択", type=['jpg', 'png', 'jpeg'])
 
 if target_file is not None:
@@ -210,32 +226,37 @@ if target_file is not None:
             results = analyze_graph_colors(image, debug=debug_mode)
             
             if not results:
-                st.error("有効な色が検出できませんでした。画像を確認してください。")
+                st.error("有効な色が検出できませんでした。グラフ部分を拡大して撮影するか、照明を調整してください。")
             else:
                 st.success("解析完了！")
-                st.markdown("### 📊 検出されたエネルギー (TOP 3)")
                 
-                for i in range(min(3, len(results))):
-                    color_name, score = results[i]
-                    if color_name in COLOR_DB:
-                        data = COLOR_DB[color_name]
-                        
-                        # 色ごとのバー表示
-                        st.write(f"{data['name']} : {score:.1f}%")
-                        st.progress(min(int(score), 100))
+                # -------------------------------------------------
+                # 結果表示エリア
+                # -------------------------------------------------
+                
+                # 1位の色を表示
+                top_color, top_score = results[0]
+                if top_color in COLOR_DB:
+                    data = COLOR_DB[top_color]
+                    
+                    st.markdown(f"## 👑 メインカラー：{data['name']}")
+                    st.markdown(f"### エネルギー割合: **{top_score:.1f}%**")
+                    
+                    st.info(f"**キーワード: {data['meaning']}**")
+                    st.write(data['positive'])
+                    
+                    with st.expander(f"⚠️ {data['name']} の課題と処方箋", expanded=True):
+                        st.warning(data['low_msg'])
+                        st.markdown(f"**💊 おすすめアクション: {data['prescription']}**")
 
-                        if i == 0:
-                            st.markdown(f"## 👑 1位：{data['name']}")
-                            st.info(f"**キーワード: {data['meaning']}**")
-                            st.write(data['positive'])
-                            with st.expander(f"⚠️ {data['name']} の課題と処方箋", expanded=True):
-                                st.warning(data['low_msg'])
-                                st.markdown(f"**💊 おすすめアクション: {data['prescription']}**")
-                        else:
-                            with st.expander(f"{i+1}位：{data['name']} の詳細を見る"):
-                                st.write(f"**キーワード:** {data['meaning']}")
-                                st.write(data['positive'])
-                                st.info(f"**処方箋:** {data['prescription']}")
-    
+                st.markdown("---")
+                st.markdown("### 📊 全体のエネルギーバランス")
+                
+                for color_name, score in results:
+                    if color_name in COLOR_DB:
+                        d = COLOR_DB[color_name]
+                        st.write(f"**{d['name']}**: {score:.1f}%")
+                        st.progress(min(int(score), 100))
+                        
     st.markdown("---")
     st.caption("監修: クォンタムヴォイスアカデミー 認定インストラクター")
