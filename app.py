@@ -25,24 +25,53 @@ HEX_COLORS = {
     "Navy": "#000080", "Violet": "#800080", "Magenta": "#FF00FF"
 }
 
-# カスタムCSS
+# カスタムCSS（文字色を強制的に濃い色にする）
 st.markdown("""
     <style>
-    /* アプリ全体の背景 */
-    .stApp { background-color: #FAFAFA; }
+    /* アプリ全体の背景と基本文字色を強制指定 */
+    .stApp {
+        background-color: #FAFAFA !important;
+        color: #333333 !important;
+    }
     
-    /* ヘッダーデザイン */
+    /* 基本テキスト、見出し、ラベルなどをすべて濃い色にする */
+    p, h1, h2, h3, h4, h5, h6, span, div, label, .stMarkdown {
+        color: #1E3A8A !important; /* ネイビーブルー */
+    }
+    
+    /* 通常の文章は少し薄めの黒にする */
+    p, li {
+        color: #333333 !important;
+    }
+
+    /* ヘッダーボックス（ここだけは背景が暗いので文字を白くする） */
     .header-box {
         background: linear-gradient(90deg, #0f2027, #203a43, #2c5364);
         padding: 20px;
         border-radius: 10px;
-        color: white;
         text-align: center;
         margin-bottom: 30px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
-    .header-title { font-size: 24px; font-weight: bold; letter-spacing: 2px; }
+    .header-box div, .header-box h1, .header-box p {
+        color: white !important;
+    }
+    .header-title { 
+        font-size: 24px; 
+        font-weight: bold; 
+        letter-spacing: 2px;
+        color: #C9A063 !important; /* ゴールド */
+    }
     
+    /* タブのスタイル調整 */
+    .stTabs [data-baseweb="tab"] {
+        color: #555555 !important; /* 未選択タブはグレー */
+    }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        color: #1E3A8A !important; /* 選択中タブはネイビー */
+        font-weight: bold;
+    }
+
     /* カードデザイン */
     .card {
         background-color: white;
@@ -62,9 +91,6 @@ st.markdown("""
         margin-top: 5px;
         margin-bottom: 10px;
     }
-    
-    /* 強調テキスト */
-    .highlight { color: #1E3A8A; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -164,7 +190,6 @@ COLOR_OPTIONS = list(COLOR_DB.keys())
 # ---------------------------------------------------------
 @st.cache_resource
 def setup_font():
-    # 日本語フォントがなければHelvetica(英語)を使用
     return "Helvetica"
 
 def create_pdf(name, top1, top2, bottom):
@@ -172,7 +197,6 @@ def create_pdf(name, top1, top2, bottom):
     c = canvas.Canvas(file_name, pagesize=A4)
     width, height = A4
     
-    # フォント設定（IPAexGothicがあれば使用）
     font_name = "Helvetica"
     if os.path.exists("IPAexGothic.ttf"):
         pdfmetrics.registerFont(TTFont('IPAexGothic', 'IPAexGothic.ttf'))
@@ -233,7 +257,6 @@ def create_pdf(name, top1, top2, bottom):
     c.setFont(font_name, 14)
     c.drawString(width/2 - 80, y-30, "21-Day Challenge Sheet")
     
-    # 簡易グリッド
     start_y = y - 60
     box_w = (width-140)/3
     box_h = 25
